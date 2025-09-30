@@ -88,8 +88,15 @@ def main():
                                      key=f"{key_prefix}_SW")
                 ST_v = st.number_input("彈片厚度 (mm)", min_value=0.1, value=0.3, step=0.1,
                                        key=f"{key_prefix}_ST")
-                SS = st.number_input("彈片行程 (mm)", min_value=0.1, value=0.5, step=0.05,
-                                     key=f"{key_prefix}_SS")
+                SS = st.number_input(
+                    "彈片行程 (mm)",
+                    min_value=0.001,
+                    value=0.500,
+                    step=0.001,
+                    format="%.3f",
+                    key=f"{key_prefix}_SS"
+                )
+
                 G = st.number_input("彈片鋼性模數 (kgf/mm²)", min_value=0.0, value=18763.0, step=1.0,
                                     key=f"{key_prefix}_G")
             return Quad(X, Y, SL, SW, ST_v, SS, G)
