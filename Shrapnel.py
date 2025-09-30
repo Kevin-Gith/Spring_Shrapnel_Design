@@ -77,14 +77,15 @@ def main():
 
         def quad_inputs(label: str, defaultX=0.0, defaultY=0.0):
             with st.expander(f"{label}的彈片參數", expanded=True):
-                X = st.number_input(f"{label} 鎖點X座標", value=defaultX, step=0.01, format="%.2f")
-                Y = st.number_input(f"{label} 鎖點Y座標", value=defaultY, step=0.01, format="%.2f")
-                SL = st.number_input(f"{label} 彈片長度 (mm)", min_value=0.1, value=20.0, step=0.1)
-                SW = st.number_input(f"{label} 彈片寬度 (mm)", min_value=0.1, value=5.0, step=0.1)
-                ST_v = st.number_input(f"{label} 彈片厚度 (mm)", min_value=0.1, value=0.3, step=0.1)
-                SS = st.number_input(f"{label} 彈片行程 (mm)", min_value=0.1, value=0.5, step=0.05)
-                G = st.number_input(f"{label} 彈片鋼性模數 (kgf/mm²)", min_value=0.0, value=18763.0, step=1.0)
+                X = st.number_input("鎖點X座標", value=defaultX, step=0.01, format="%.2f")
+                Y = st.number_input("鎖點Y座標", value=defaultY, step=0.01, format="%.2f")
+                SL = st.number_input("彈片長度 (mm)", min_value=0.1, value=20.0, step=0.1)
+                SW = st.number_input("彈片寬度 (mm)", min_value=0.1, value=5.0, step=0.1)
+                ST_v = st.number_input("彈片厚度 (mm)", min_value=0.1, value=0.3, step=0.1)
+                SS = st.number_input("彈片行程 (mm)", min_value=0.1, value=0.5, step=0.05)
+                G = st.number_input("彈片鋼性模數 (kgf/mm²)", min_value=0.0, value=18763.0, step=1.0)
             return Quad(X, Y, SL, SW, ST_v, SS, G)
+
 
         quadA = quad_inputs("第一象限", 10.0, 10.0)
         quadB = quad_inputs("第二象限", -10.0, 10.0)
@@ -205,7 +206,7 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
+
 # ----------以下訊息保留 ----------
 #使用者自行輸入數值(會有正值或負值)
 #1.*"A1"代表彈片中心的第一象限X座標，浮點數，單位mm
