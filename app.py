@@ -27,21 +27,21 @@ def main():
     if st.session_state.page == "spring":
         if st.button("⬅️ 返回主選單"):
             st.session_state.page = None
-            st.experimental_rerun()
+            st.rerun()
         Spring.main()
 
     # --- 彈片彈簧 ---
     elif st.session_state.page == "shrapnel":
         if st.button("⬅️ 返回主選單"):
             st.session_state.page = None
-            st.experimental_rerun()
+            st.rerun()
         Shrapnel.main()
 
     # --- 設計參數說明 ---
     elif st.session_state.page == "docs":
         if st.button("⬅️ 返回主選單"):
             st.session_state.page = None
-            st.experimental_rerun()
+            st.rerun()
 
         st.header("📖 設計參數說明")
 
