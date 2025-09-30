@@ -17,12 +17,12 @@ class Quad:
     SS: float  # 彈片行程 (mm)
     G: float   # 彈片鋼性模數 (kgf/mm²)
 
-    # 慣性矩 I = (SW * ST^3) / 12
     def inertia(self) -> float:
+        """慣性矩 I = (SW * ST^3) / 12"""
         return (self.SW * (self.ST ** 3)) / 12.0
 
-    # 合力 F = (3 * G * I * SS) / SL^3
     def force(self) -> float:
+        """合力 F = (3 * G * I * SS) / SL^3"""
         I = self.inertia()
         return (3.0 * self.G * I * self.SS) / (self.SL ** 3)
 
@@ -75,22 +75,30 @@ def main():
         st.markdown("---")
         st.subheader("📌 彈片參數輸入")
 
-        def quad_inputs(label: str, defaultX=0.0, defaultY=0.0):
+        # ---- 單象限輸入 ----
+        def quad_inputs(label: str, key_prefix: str, defaultX=0.0, defaultY=0.0):
             with st.expander(f"{label}的彈片參數", expanded=True):
-                X = st.number_input("鎖點X座標", value=defaultX, step=0.01, format="%.2f")
-                Y = st.number_input("鎖點Y座標", value=defaultY, step=0.01, format="%.2f")
-                SL = st.number_input("彈片長度 (mm)", min_value=0.1, value=20.0, step=0.1)
-                SW = st.number_input("彈片寬度 (mm)", min_value=0.1, value=5.0, step=0.1)
-                ST_v = st.number_input("彈片厚度 (mm)", min_value=0.1, value=0.3, step=0.1)
-                SS = st.number_input("彈片行程 (mm)", min_value=0.1, value=0.5, step=0.05)
-                G = st.number_input("彈片鋼性模數 (kgf/mm²)", min_value=0.0, value=18763.0, step=1.0)
+                X = st.number_input("鎖點X座標", value=defaultX, step=0.01, format="%.2f",
+                                    key=f"{key_prefix}_X")
+                Y = st.number_input("鎖點Y座標", value=defaultY, step=0.01, format="%.2f",
+                                    key=f"{key_prefix}_Y")
+                SL = st.number_input("彈片長度 (mm)", min_value=0.1, value=20.0, step=0.1,
+                                     key=f"{key_prefix}_SL")
+                SW = st.number_input("彈片寬度 (mm)", min_value=0.1, value=5.0, step=0.1,
+                                     key=f"{key_prefix}_SW")
+                ST_v = st.number_input("彈片厚度 (mm)", min_value=0.1, value=0.3, step=0.1,
+                                       key=f"{key_prefix}_ST")
+                SS = st.number_input("彈片行程 (mm)", min_value=0.1, value=0.5, step=0.05,
+                                     key=f"{key_prefix}_SS")
+                G = st.number_input("彈片鋼性模數 (kgf/mm²)", min_value=0.0, value=18763.0, step=1.0,
+                                    key=f"{key_prefix}_G")
             return Quad(X, Y, SL, SW, ST_v, SS, G)
 
-
-        quadA = quad_inputs("第一象限", 10.0, 10.0)
-        quadB = quad_inputs("第二象限", -10.0, 10.0)
-        quadC = quad_inputs("第三象限", -10.0, -10.0)
-        quadD = quad_inputs("第四象限", 10.0, -10.0)
+        # ---- 四象限輸入 ----
+        quadA = quad_inputs("第一象限", "A", 10.0, 10.0)
+        quadB = quad_inputs("第二象限", "B", -10.0, 10.0)
+        quadC = quad_inputs("第三象限", "C", -10.0, -10.0)
+        quadD = quad_inputs("第四象限", "D", 10.0, -10.0)
 
         submitted = st.form_submit_button("🚀 開始計算 / 最佳化")
 
@@ -107,10 +115,10 @@ def main():
     cols_res = st.columns(4)
     for idx, name in enumerate(["第一", "第二", "第三", "第四"]):
         q = quads[name]
-        I = round(q.inertia(), 6)   # *I
-        F = round(q.force(), 6)     # *F
-        XM = round(q.moment_x(F), 6)  # *XM
-        YM = round(q.moment_y(F), 6)  # *YM
+        I = round(q.inertia(), 6)
+        F = round(q.force(), 6)
+        XM = round(q.moment_x(F), 6)
+        YM = round(q.moment_y(F), 6)
 
         total_F += F
         total_XM += XM
