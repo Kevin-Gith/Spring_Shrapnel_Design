@@ -48,11 +48,11 @@ def main():
         col1, col2 = st.columns(2)
         with col1:
             st.subheader("🔩 壓縮彈簧參數")
-            st.image("Spring.PNG", caption="壓縮彈簧參數", use_column_width=True)
+            st.image("Spring.PNG", caption="壓縮彈簧", use_container_width=True)
 
         with col2:
             st.subheader("⚙️ 彈片彈簧參數")
-            st.image("Shrapnel.PNG", caption="彈片彈簧參數", use_column_width=True)
+            st.image("Shrapnel.PNG", caption="彈片彈簧", use_container_width=True)
 
 if __name__ == "__main__":
     main()
