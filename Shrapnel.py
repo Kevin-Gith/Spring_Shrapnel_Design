@@ -152,16 +152,16 @@ def main():
     st.subheader("✅ 結果判定")
     lower_bound = F_target * 0.95
     upper_bound = F_target * 1.05
-    X_status = "OK" if -0.5 <= ALL_X <= 0.5 else "NG"
-    Y_status = "OK" if -0.5 <= ALL_Y <= 0.5 else "NG"
-    F_status = "OK" if lower_bound <= total_F <= upper_bound else "NG"
+    X_status = "⭕ OK" if -0.5 <= ALL_X <= 0.5 else "❌ NG"
+    Y_status = "⭕ OK" if -0.5 <= ALL_Y <= 0.5 else "❌ NG"
+    F_status = "⭕ OK" if lower_bound <= total_F <= upper_bound else "❌ NG"
 
     st.write(f"合力中心 X 座標 (範圍 -0.5 ~ +0.5)：**{X_status}**")
     st.write(f"合力中心 Y 座標 (範圍 -0.5 ~ +0.5)：**{Y_status}**")
     st.write(f"總合力 F (範圍 {lower_bound:.2f} ~ {upper_bound:.2f})：**{F_status}**")
 
     # -------------------- 最佳化搜尋 --------------------
-    st.subheader("🧠 最佳化搜尋（滿足 F±5%、X/Y 在 ±0.5）")
+    st.subheader("💻最佳化組合")
 
     ST_candidates = [0.3, 0.4, 0.5]
     base_SW = quadA.SW
@@ -210,7 +210,7 @@ def main():
         for idx, (STv, SWv, SLs, SSv, totF, allX, allY, stars, modified) in enumerate(results[:N_show], 1):
             with st.expander(f"組合 {idx}（{stars}）", expanded=(idx == 1)):
                 for i, nm in enumerate(["第一", "第二", "第三", "第四"]):
-                    st.write(f"{nm}象限 → 長度={SLs[i]:.2f} mm / 寬度={SWv:.2f} mm / 厚度={STv:.2f} mm / 行程={SSv:.2f} mm")
+                    st.write(f"{nm}象限 → 長度={SLs[i]:.2f} mm / 寬度={SWv:.2f} mm / 厚度={STv:.2f} mm / 行程={SSv:.3f} mm")
                 modified_cn = [param_map[p] for p in sorted(modified)]
                 st.write(f"🔧 修改參數：{('、'.join(modified_cn)) if modified_cn else '無'}")
                 st.write(f"合力中心 X：{allX:.2f}，Y：{allY:.2f}，總合力 F：{totF:.2f} kgf")
