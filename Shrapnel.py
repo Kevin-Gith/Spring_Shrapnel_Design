@@ -22,7 +22,9 @@ class Quad:
         return (self.SW * (self.ST ** 3)) / 12.0
 
     def force(self) -> float:
-        """合力 F = (3 * G * I * SS) / SL^3"""
+        """合力 F = (3 * G * I * SS) / SL^3；任一必要尺寸為 0 時回傳 0，避免除零。"""
+        if self.SL == 0 or self.SW == 0 or self.ST == 0 or self.SS == 0 or self.G == 0:
+            return 0.0
         I = self.inertia()
         return (3.0 * self.G * I * self.SS) / (self.SL ** 3)
 
@@ -56,6 +58,12 @@ def assign_stars(modified_params: set) -> str:
         return {1: "★★★", 2: "★★", 3: "★"}.get(len(modified_params), "★")
 
 
+def is_quad4_disabled_by_dims(q: Quad) -> bool:
+    """第4象限停用條件：D_SL、D_SW、D_ST、D_SS 全為 0 則不參與最佳化。"""
+    eps = 1e-12
+    return (abs(q.SL) < eps and abs(q.SW) < eps and abs(q.ST) < eps and abs(q.SS) < eps)
+
+
 # -------------------- Streamlit App --------------------
 def main():
     st.set_page_config(page_title="彈片彈簧計算器", page_icon="⚙️", layout="wide")
@@ -82,21 +90,20 @@ def main():
                                     key=f"{key_prefix}_X")
                 Y = st.number_input("鎖點Y座標", value=defaultY, step=0.01, format="%.2f",
                                     key=f"{key_prefix}_Y")
-                SL = st.number_input("彈片長度 (mm)", min_value=0.1, value=20.0, step=0.1,
+                SL = st.number_input("彈片長度 (mm)", min_value=0.0, value=20.0, step=0.1,
                                      key=f"{key_prefix}_SL")
-                SW = st.number_input("彈片寬度 (mm)", min_value=0.1, value=5.0, step=0.1,
+                SW = st.number_input("彈片寬度 (mm)", min_value=0.0, value=5.0, step=0.1,
                                      key=f"{key_prefix}_SW")
-                ST_v = st.number_input("彈片厚度 (mm)", min_value=0.1, value=0.3, step=0.1,
+                ST_v = st.number_input("彈片厚度 (mm)", min_value=0.0, value=0.3, step=0.1,
                                        key=f"{key_prefix}_ST")
                 SS = st.number_input(
                     "彈片行程 (mm)",
-                    min_value=0.001,
+                    min_value=0.0,
                     value=0.500,
                     step=0.001,
                     format="%.3f",
                     key=f"{key_prefix}_SS"
                 )
-
                 G = st.number_input("彈片鋼性模數 (kgf/mm²)", min_value=0.0, value=18763.0, step=1.0,
                                     key=f"{key_prefix}_G")
             return Quad(X, Y, SL, SW, ST_v, SS, G)
@@ -169,7 +176,16 @@ def main():
     base_SS = quadA.SS
     SS_candidates = frange(max(0.3, base_SS - 0.2), base_SS + 0.2, 0.05)
     SL_bases = [quadA.SL, quadB.SL, quadC.SL, quadD.SL]
-    SL_ranges = [frange(max(5.0, base - 0.5), base + 0.5, 0.1) for base in SL_bases]
+
+    # **關鍵**：若第4象限尺寸皆為0，視為不參與最佳化
+    disable_D = is_quad4_disabled_by_dims(quadD)
+
+    SL_ranges = [
+        frange(max(5.0, quadA.SL - 0.5), quadA.SL + 0.5, 0.1),
+        frange(max(5.0, quadB.SL - 0.5), quadB.SL + 0.5, 0.1),
+        frange(max(5.0, quadC.SL - 0.5), quadC.SL + 0.5, 0.1),
+        [0.0] if disable_D else frange(max(5.0, quadD.SL - 0.5), quadD.SL + 0.5, 0.1),
+    ]
 
     results = []
     for ST_val in ST_candidates:
@@ -180,7 +196,8 @@ def main():
                         "第一": Quad(quadA.X, quadA.Y, SL_combo[0], SW_val, ST_val, SS_val, quadA.G),
                         "第二": Quad(quadB.X, quadB.Y, SL_combo[1], SW_val, ST_val, SS_val, quadB.G),
                         "第三": Quad(quadC.X, quadC.Y, SL_combo[2], SW_val, ST_val, SS_val, quadC.G),
-                        "第四": Quad(quadD.X, quadD.Y, SL_combo[3], SW_val, ST_val, SS_val, quadD.G),
+                        "第四": (Quad(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0) if disable_D
+                                 else Quad(quadD.X, quadD.Y, SL_combo[3], SW_val, ST_val, SS_val, quadD.G)),
                     }
                     totF = totXM = totYM = 0.0
                     for nm in ["第一", "第二", "第三", "第四"]:
@@ -192,13 +209,24 @@ def main():
                         totYM += Yi
                     allX = (totXM / totF) if totF != 0 else 0.0
                     allY = (totYM / totF) if totF != 0 else 0.0
-                    if not (lower_bound <= totF <= upper_bound): continue
-                    if not (-0.5 <= allX <= 0.5 and -0.5 <= allY <= 0.5): continue
+
+                    # 條件判斷
+                    lower_bound = F_target * 0.95
+                    upper_bound = F_target * 1.05
+                    if not (lower_bound <= totF <= upper_bound): 
+                        continue
+                    if not (-0.5 <= allX <= 0.5 and -0.5 <= allY <= 0.5): 
+                        continue
+
                     modified = set()
                     if round(ST_val - quadA.ST, 6) != 0: modified.add("ST")
                     if round(SW_val - quadA.SW, 6) != 0: modified.add("SW")
-                    if any(round(SL_combo[i] - SL_bases[i], 6) != 0 for i in range(4)): modified.add("SL")
+                    # 只比對啟用象限的 SL 變化
+                    enabled_indices = [0, 1, 2] + ([] if disable_D else [3])
+                    if any(round(SL_combo[i] - SL_bases[i], 6) != 0 for i in enabled_indices):
+                        modified.add("SL")
                     if round(SS_val - quadA.SS, 6) != 0: modified.add("SS")
+
                     stars = assign_stars(modified)
                     results.append((ST_val, SW_val, SL_combo, SS_val, totF, allX, allY, stars, modified))
 
