@@ -83,30 +83,114 @@ def main():
         st.markdown("---")
         st.subheader("📌 彈片參數輸入")
 
-        # ---- 單象限輸入 ----
-        def quad_inputs(label: str, key_prefix: str, defaultX=0.0, defaultY=0.0):
-            with st.expander(f"{label}的彈片參數", expanded=True):
-                X = st.number_input("鎖點X座標", value=defaultX, step=0.01, format="%.2f",
-                                    key=f"{key_prefix}_X")
-                Y = st.number_input("鎖點Y座標", value=defaultY, step=0.01, format="%.2f",
-                                    key=f"{key_prefix}_Y")
-                SL = st.number_input("彈片長度 (mm)", min_value=0.0, value=20.0, step=0.1,
-                                     key=f"{key_prefix}_SL")
-                SW = st.number_input("彈片寬度 (mm)", min_value=0.0, value=5.0, step=0.1,
-                                     key=f"{key_prefix}_SW")
-                ST_v = st.number_input("彈片厚度 (mm)", min_value=0.0, value=0.3, step=0.1,
-                                       key=f"{key_prefix}_ST")
-                SS = st.number_input(
-                    "彈片行程 (mm)",
-                    min_value=0.0,
-                    value=0.500,
-                    step=0.001,
-                    format="%.3f",
-                    key=f"{key_prefix}_SS"
-                )
-                G = st.number_input("彈片鋼性模數 (kgf/mm²)", min_value=0.0, value=18763.0, step=1.0,
-                                    key=f"{key_prefix}_G")
-            return Quad(X, Y, SL, SW, ST_v, SS, G)
+        # -------------------- 最佳化搜尋（兩階段步進：SL/SW/ST 先 0.1 → 再 0.02） --------------------
+st.subheader("💻最佳化組合（兩階段步進）")
+
+# 基準值
+base_SW = quadA.SW
+base_SS = quadA.SS
+SL_bases = [quadA.SL, quadB.SL, quadC.SL, quadD.SL]
+
+# 第 4 象限停用（D_SL、D_SW、D_ST、D_SS 皆 0 時）
+disable_D = is_quad4_disabled_by_dims(quadD)
+
+# ST 的搜尋範圍：沿用你原本集合 {0.3,0.4,0.5} 的 min/max，不改範圍只改「步進」
+ST_base_set = [0.3, 0.4, 0.5]
+min_ST, max_ST = min(ST_base_set), max(ST_base_set)
+
+# 其他固定限制（沿用你的規則）
+MIN_SW = 3.0
+MIN_SL = 5.0
+MIN_SS = 0.3
+
+# SS 候選維持你原本規則（不變）
+SS_candidates = frange(max(MIN_SS, base_SS - 0.2), base_SS + 0.2, 0.05)
+
+results = []
+star_rank = {"★★★★": 4, "★★★": 3, "★★": 2, "★": 1}
+param_map = {"SL": "長度", "SW": "寬度", "ST": "厚度", "SS": "行程"}
+
+# 目標判定（沿用 ±5% 與 X/Y ±0.5）
+lower_bound = F_target * 0.95
+upper_bound = F_target * 1.05
+xy_tol = 0.5
+
+# 兩階段步進：先粗（0.1），沒解再細（0.02）
+for step_phase, step_val in enumerate([0.1, 0.02], start=1):
+    # 依此步進建立 ST / SW / SL 候選
+    ST_candidates = frange(min_ST, max_ST, step_val)  # 例如 0.3~0.5 步 0.1 → [0.3,0.4,0.5]
+    SW_candidates = frange(max(MIN_SW, base_SW - 0.5), base_SW + 0.5, step_val)
+    SL_ranges = [
+        frange(max(MIN_SL, SL_bases[0] - 0.5), SL_bases[0] + 0.5, step_val),
+        frange(max(MIN_SL, SL_bases[1] - 0.5), SL_bases[1] + 0.5, step_val),
+        frange(max(MIN_SL, SL_bases[2] - 0.5), SL_bases[2] + 0.5, step_val),
+        [0.0] if disable_D else frange(max(MIN_SL, SL_bases[3] - 0.5), SL_bases[3] + 0.5, step_val),
+    ]
+
+    # 粗估組合數（給你參考）
+    combo_est = len(ST_candidates) * len(SW_candidates) * len(SS_candidates) \
+                * len(SL_ranges[0]) * len(SL_ranges[1]) * len(SL_ranges[2]) * len(SL_ranges[3])
+    st.info(f"Phase {step_phase}: 步進 ST/SW/SL = {step_val}，估計組合 ≈ {combo_est:,}")
+
+    # 主搜尋
+    for ST_val in ST_candidates:
+        for SW_val in SW_candidates:
+            for SS_val in SS_candidates:
+                for SL_combo in itertools.product(*SL_ranges):
+                    opt = {
+                        "第一": Quad(quadA.X, quadA.Y, SL_combo[0], SW_val, ST_val, SS_val, quadA.G),
+                        "第二": Quad(quadB.X, quadB.Y, SL_combo[1], SW_val, ST_val, SS_val, quadB.G),
+                        "第三": Quad(quadC.X, quadC.Y, SL_combo[2], SW_val, ST_val, SS_val, quadC.G),
+                        "第四": (Quad(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0) if disable_D
+                                 else Quad(quadD.X, quadD.Y, SL_combo[3], SW_val, ST_val, SS_val, quadD.G)),
+                    }
+
+                    totF = totXM = totYM = 0.0
+                    for nm in ("第一", "第二", "第三", "第四"):
+                        Fi = opt[nm].force()
+                        totF += Fi
+                        totXM += opt[nm].moment_x(Fi)
+                        totYM += opt[nm].moment_y(Fi)
+
+                    if not (lower_bound <= totF <= upper_bound):
+                        continue
+                    if abs(totF) < 1e-12:
+                        continue
+
+                    allX = (totXM / totF)
+                    allY = (totYM / totF)
+                    if not (-xy_tol <= allX <= xy_tol and -xy_tol <= allY <= xy_tol):
+                        continue
+
+                    modified = set()
+                    if round(ST_val - quadA.ST, 6) != 0: modified.add("ST")
+                    if round(SW_val - quadA.SW, 6) != 0: modified.add("SW")
+                    enabled_indices = [0, 1, 2] + ([] if disable_D else [3])
+                    if any(round(SL_combo[i] - SL_bases[i], 6) != 0 for i in enabled_indices):
+                        modified.add("SL")
+                    if round(SS_val - quadA.SS, 6) != 0: modified.add("SS")
+
+                    stars = assign_stars(modified)
+                    results.append((ST_val, SW_val, SL_combo, SS_val, totF, allX, allY, stars, modified))
+
+    # 若本階段已有解，立即停止；沒有才進入下一階段（細步進）
+    if results:
+        st.success(f"在 Phase {step_phase} 找到解，共 {len(results)} 組；停止放細。")
+        break
+
+# ===== 結果呈現 =====
+if not results:
+    st.warning("❌ 找不到符合條件的最佳化組合；已嘗試步進 0.1 與 0.02，建議放寬範圍或調整目標條件。")
+else:
+    results.sort(key=lambda x: (-star_rank.get(x[7], 1), abs(x[4] - F_target)))
+    st.success(f"✅ 找到 {len(results)} 組符合條件的最佳化結果，顯示前 {min(N_show, len(results))} 組：")
+    for idx, (STv, SWv, SLs, SSv, totF, allX, allY, stars, modified) in enumerate(results[:N_show], 1):
+        with st.expander(f"組合 {idx}（{stars}）", expanded=(idx == 1)):
+            for i, nm in enumerate(["第一", "第二", "第三", "第四"]):
+                st.write(f"{nm}象限 → 長度={SLs[i]:.2f} mm / 寬度={SWv:.2f} mm / 厚度={STv:.2f} mm / 行程={SSv:.3f} mm")
+            modified_cn = [param_map[p] for p in sorted(modified)]
+            st.write(f"🔧 修改參數：{('、'.join(modified_cn)) if modified_cn else '無'}")
+            st.write(f"合力中心 X：{allX:.2f}，Y：{allY:.2f}，總合力 F：{totF:.2f} kgf")
 
         # ---- 四象限輸入 ----
         quadA = quad_inputs("第一象限", "A", 10.0, 10.0)
