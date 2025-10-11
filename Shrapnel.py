@@ -39,8 +39,7 @@ class Quad:
 def frange(start: float, stop: float, step: float):
     vals = []
     x = start
-    # 容忍度避免浮點誤差
-    while x <= stop + 1e-9:
+    while x <= stop + 1e-9:  # 容忍浮點誤差
         vals.append(round(x, 6))
         x += step
     return vals
@@ -87,11 +86,12 @@ def main():
 
         # ---- 單象限輸入 ----
         def quad_inputs(label: str, key_prefix: str, defaultX=0.0, defaultY=0.0):
-            with st.expander(f"{label}的彈片參數（第4象限可全輸入0以停用）", expanded=True):
+            with st.expander(f"{label}的彈片參數（第四象限可全輸入0以停用）", expanded=True):
                 X = st.number_input("鎖點X座標", value=defaultX, step=0.01, format="%.2f",
                                     key=f"{key_prefix}_X")
                 Y = st.number_input("鎖點Y座標", value=defaultY, step=0.01, format="%.2f",
                                     key=f"{key_prefix}_Y")
+                # 允許 0：配合第4象限可停用
                 SL = st.number_input("彈片長度 (mm)", min_value=0.0, value=20.0, step=0.1,
                                      key=f"{key_prefix}_SL")
                 SW = st.number_input("彈片寬度 (mm)", min_value=0.0, value=5.0, step=0.1,
@@ -169,10 +169,10 @@ def main():
     st.write(f"合力中心 Y 座標 (範圍 -0.5 ~ +0.5)：**{Y_status}**")
     st.write(f"總合力 F (範圍 {lower_bound:.2f} ~ {upper_bound:.2f})：**{F_status}**")
 
-    # ==================== 最佳化搜尋（兩階段步進：SL/SW/ST 先 0.1 → 再 0.02） ====================
-    st.subheader("💻最佳化組合（兩階段步進）")
+    # ==================== 最佳化搜尋（兩階段步進；顯示與排序同原版） ====================
+    st.subheader("💻最佳化組合")
 
-    # 基準值與限制
+    # 基準與限制
     base_SW = quadA.SW
     base_SS = quadA.SS
     SL_bases = [quadA.SL, quadB.SL, quadC.SL, quadD.SL]
@@ -182,16 +182,15 @@ def main():
     MIN_SL = 5.0
     MIN_SS = 0.3
 
-    # ST 以範圍+步進掃描（0.3~0.5）
+    # ST 以區間+步進掃描（0.3~0.5）
     ST_min, ST_max = 0.3, 0.5
-
     # SS 候選維持原規則（±0.2，步0.05）
     SS_candidates = frange(max(MIN_SS, base_SS - 0.2), base_SS + 0.2, 0.05)
 
     results = []
     xy_tol = 0.5
 
-    for phase_idx, step_val in enumerate([0.1, 0.02], start=1):
+    for step_val in (0.1, 0.02):  # 兩階段：先粗後細
         ST_candidates = frange(ST_min, ST_max, step_val)
         SW_candidates = frange(max(MIN_SW, base_SW - 0.5), base_SW + 0.5, step_val)
         SL_ranges = [
@@ -200,10 +199,6 @@ def main():
             frange(max(MIN_SL, SL_bases[2] - 0.5), SL_bases[2] + 0.5, step_val),
             [0.0] if disable_D else frange(max(MIN_SL, SL_bases[3] - 0.5), SL_bases[3] + 0.5, step_val),
         ]
-
-        combo_est = len(ST_candidates) * len(SW_candidates) * len(SS_candidates) \
-                    * len(SL_ranges[0]) * len(SL_ranges[1]) * len(SL_ranges[2]) * len(SL_ranges[3])
-        st.info(f"Phase {phase_idx}: 步進 ST/SW/SL = {step_val}；估計組合 ≈ {combo_est:,}")
 
         for STv in ST_candidates:
             for SWv in SW_candidates:
@@ -246,12 +241,11 @@ def main():
                         results.append((STv, SWv, SLs, SSv, totF, allX, allY, stars, modified))
 
         if results:
-            st.success(f"在 Phase {phase_idx} 找到解，共 {len(results)} 組；停止細化。")
-            break
+            break  # 找到解就不進入下一階段
 
-    # ===== 結果呈現 =====
+    # ===== 只顯示結果（排序規則同原版）=====
     if not results:
-        st.warning("❌ 找不到符合條件的最佳化組合；已嘗試步進 0.1 與 0.02，建議放寬範圍或調整目標條件。")
+        st.warning("❌ 找不到符合條件的最佳化組合，請調整輸入條件或範圍。")
     else:
         results.sort(key=lambda x: (-star_rank.get(x[7], 1), abs(x[4] - F_target)))
         st.success(f"✅ 找到 {len(results)} 組符合條件的最佳化結果，顯示前 {min(N_show, len(results))} 組：")
