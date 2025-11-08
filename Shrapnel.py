@@ -5,6 +5,8 @@ import streamlit as st
 from dataclasses import dataclass
 from datetime import datetime
 import itertools
+import pytz
+tz_TW = pytz.timezone("Asia/Taipei")
 
 # -------------------- 資料結構 --------------------
 @dataclass
@@ -41,7 +43,8 @@ def frange(start: float, stop: float, step: float):
     x = start
     while x <= stop + 1e-9:  # 容忍浮點誤差
         vals.append(round(x, 6))
-        x += step
+    # 防止無限迴圈
+        x += step if step != 0 else 1e-9
     return vals
 
 
@@ -86,7 +89,7 @@ def main():
 
         # ---- 單象限輸入 ----
         def quad_inputs(label: str, key_prefix: str, defaultX=0.0, defaultY=0.0):
-            with st.expander(f"{label}的彈片參數（第四象限可全輸入0以停用）", expanded=True):
+            with st.expander(f"{label}的彈片參數", expanded=True):
                 X = st.number_input("鎖點X座標", value=defaultX, step=0.01, format="%.2f",
                                     key=f"{key_prefix}_X")
                 Y = st.number_input("鎖點Y座標", value=defaultY, step=0.01, format="%.2f",
@@ -121,17 +124,17 @@ def main():
     # ===== 尚未提交 =====
     if not submitted:
         st.info("請在上方輸入參數後按下「開始計算 / 最佳化」。")
-        st.write("最後更新時間：", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        st.write("最後更新時間：", datetime.now(tz_TW).strftime("%Y-%m-%d %H:%M:%S"))
         return
 
     # ===== 計算單象限結果 =====
     st.subheader("📈 四象限計算結果")
-    quads = {"第一": quadA, "第二": quadB, "第三": quadC, "第四": quadD}
+    quads_dict = {"第一": quadA, "第二": quadB, "第三": quadC, "第四": quadD}
 
     total_F = total_XM = total_YM = 0.0
     cols_res = st.columns(4)
     for idx, name in enumerate(["第一", "第二", "第三", "第四"]):
-        q = quads[name]
+        q = quads_dict[name]
         I = round(q.inertia(), 6)
         F = round(q.force(), 6)
         XM = round(q.moment_x(F), 6)
@@ -169,10 +172,10 @@ def main():
     st.write(f"合力中心 Y 座標 (範圍 -0.5 ~ +0.5)：**{Y_status}**")
     st.write(f"總合力 F (範圍 {lower_bound:.2f} ~ {upper_bound:.2f})：**{F_status}**")
 
-    # ==================== 最佳化搜尋（兩階段步進；顯示與排序同原版） ====================
+    # ==================== 三階段(粗→中→精) + Beam Search（含剪枝與早停） ====================
     st.subheader("💻最佳化組合")
 
-    # 基準與限制
+    # ---- 基準與限制 ----
     base_SW = quadA.SW
     base_SS = quadA.SS
     SL_bases = [quadA.SL, quadB.SL, quadC.SL, quadD.SL]
@@ -182,74 +185,192 @@ def main():
     MIN_SL = 5.0
     MIN_SS = 0.3
 
-    # ST 以區間+步進掃描（0.3~0.5）
+    # ST 區間
     ST_min, ST_max = 0.3, 0.5
-    # SS 候選維持原規則（±0.2，步0.05）
-    SS_candidates = frange(max(MIN_SS, base_SS - 0.2), base_SS + 0.2, 0.05)
 
-    results = []
+    # 目標判定與早停
+    RESULT_CAP = int(max(10, N_show * 3))  # 收集到足夠解就停
     xy_tol = 0.5
 
-    for step_val in (0.1, 0.02):  # 兩階段：先粗後細
+    # 便捷物件
+    quads = [quadA, quadB, quadC] + ([] if disable_D else [quadD])
+
+    def sum_F_bounds(SWv, STv, SSv, SL_ranges):
+        """用目前 SW, ST, SS 與各象限 SL 範圍估計總合力的最小與最大值（剪枝）。"""
+        total_min = 0.0
+        total_max = 0.0
+        for i, q in enumerate(quads):
+            SL_list = SL_ranges[i]
+            if not SL_list:
+                continue
+            SLmin = min(SL_list)
+            SLmax = max(SL_list)
+            # Cq = (G * SS * SW * ST^3) / 4
+            Cq = (q.G * SSv * SWv * (STv ** 3)) / 4.0
+            if SLmin <= 0 or SLmax <= 0 or Cq == 0:
+                continue
+            F_q_max = Cq / (SLmin ** 3)  # SL 越小 F 越大
+            F_q_min = Cq / (SLmax ** 3)
+            total_min += F_q_min
+            total_max += F_q_max
+        return total_min, total_max
+
+    def evaluate_combo(STv, SWv, SSv, SLs):
+        """回傳 (是否可行, 結果tuple 或 None, |F-F_target|)"""
+        opt = {
+            "第一": Quad(quadA.X, quadA.Y, SLs[0], SWv, STv, SSv, quadA.G),
+            "第二": Quad(quadB.X, quadB.Y, SLs[1], SWv, STv, SSv, quadB.G),
+            "第三": Quad(quadC.X, quadC.Y, SLs[2], SWv, STv, SSv, quadC.G),
+            "第四": (Quad(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0) if disable_D
+                     else Quad(quadD.X, quadD.Y, SLs[3], SWv, STv, SSv, quadD.G)),
+        }
+        totF = totXM = totYM = 0.0
+        for nm in ("第一", "第二", "第三", "第四"):
+            Fi = opt[nm].force()
+            totF += Fi
+            totXM += opt[nm].moment_x(Fi)
+            totYM += opt[nm].moment_y(Fi)
+
+        if not (lower_bound <= totF <= upper_bound):
+            return False, None, abs(totF - F_target)
+        if abs(totF) < 1e-12:
+            return False, None, abs(totF - F_target)
+
+        allX = (totXM / totF)
+        allY = (totYM / totF)
+        if not (-xy_tol <= allX <= xy_tol and -xy_tol <= allY <= xy_tol):
+            return False, None, abs(totF - F_target)
+
+        # 記錄修改參數
+        modified = set()
+        if round(STv - quadA.ST, 6) != 0: modified.add("ST")
+        if round(SWv - base_SW, 6) != 0: modified.add("SW")
+        enabled_idx = [0, 1, 2] + ([] if disable_D else [3])
+        if any(round(SLs[i] - SL_bases[i], 6) != 0 for i in enabled_idx):
+            modified.add("SL")
+        if round(SSv - base_SS, 6) != 0: modified.add("SS")
+        stars = assign_stars(modified)
+
+        return True, (STv, SWv, SLs, SSv, totF, allX, allY, stars, modified), abs(totF - F_target)
+
+    def scan_stage(step_val, SS_step, SL_half_span=0.5, seeds=None, beam_local=False):
+        """
+        通用掃描：
+        - 若 seeds 為 None：全域掃描（SW/SL 以 base±0.5）。
+        - 若 beam_local=True：在 seeds 的附近建立「小區間」局部掃描。
+        回傳 (可行結果list, 種子list[ (ST,SW,SS,SLs, |F-Ft|) ])。
+        """
+        stage_results = []
+        seeds_out = []
+
+        # 建立 SL 範圍（全域或局部）
+        def build_SL_ranges(center_SLs=None, half_span=SL_half_span):
+            if beam_local and center_SLs is not None:
+                return [
+                    frange(max(MIN_SL, center_SLs[0] - half_span), center_SLs[0] + half_span, step_val),
+                    frange(max(MIN_SL, center_SLs[1] - half_span), center_SLs[1] + half_span, step_val),
+                    frange(max(MIN_SL, center_SLs[2] - half_span), center_SLs[2] + half_span, step_val),
+                    [0.0] if disable_D else frange(max(MIN_SL, center_SLs[3] - half_span), center_SLs[3] + half_span, step_val),
+                ]
+            else:
+                return [
+                    frange(max(MIN_SL, SL_bases[0] - 0.5), SL_bases[0] + 0.5, step_val),
+                    frange(max(MIN_SL, SL_bases[1] - 0.5), SL_bases[1] + 0.5, step_val),
+                    frange(max(MIN_SL, SL_bases[2] - 0.5), SL_bases[2] + 0.5, step_val),
+                    [0.0] if disable_D else frange(max(MIN_SL, SL_bases[3] - 0.5), SL_bases[3] + 0.5, step_val),
+                ]
+
+        # ST / SW / SS 候選
         ST_candidates = frange(ST_min, ST_max, step_val)
         SW_candidates = frange(max(MIN_SW, base_SW - 0.5), base_SW + 0.5, step_val)
-        SL_ranges = [
-            frange(max(MIN_SL, SL_bases[0] - 0.5), SL_bases[0] + 0.5, step_val),
-            frange(max(MIN_SL, SL_bases[1] - 0.5), SL_bases[1] + 0.5, step_val),
-            frange(max(MIN_SL, SL_bases[2] - 0.5), SL_bases[2] + 0.5, step_val),
-            [0.0] if disable_D else frange(max(MIN_SL, SL_bases[3] - 0.5), SL_bases[3] + 0.5, step_val),
-        ]
+        SS_candidates = frange(max(MIN_SS, base_SS - 0.2), base_SS + 0.2, SS_step)
 
+        # 局部掃描（Beam）
+        if beam_local and seeds:
+            for (sST, sSW, sSS, sSLs, _) in seeds:
+                ST_pool = frange(max(ST_min, sST - step_val), min(ST_max, sST + step_val), step_val)
+                SW_pool = frange(max(MIN_SW, sSW - step_val), sSW + step_val, step_val)
+                SS_pool = frange(max(MIN_SS, sSS - SS_step), sSS + SS_step, SS_step)
+                SL_ranges = build_SL_ranges(center_SLs=sSLs, half_span=SL_half_span)
+
+                for STv in ST_pool:
+                    for SWv in SW_pool:
+                        for SSv in SS_pool:
+                            F_sum_min, F_sum_max = sum_F_bounds(SWv, STv, SSv, SL_ranges)
+                            if (F_sum_max < lower_bound) or (F_sum_min > upper_bound):
+                                continue
+                            for SLs in itertools.product(*SL_ranges):
+                                if disable_D and (len(SLs) == 4) and (abs(SLs[3]) > 1e-12):
+                                    continue
+                                ok, tup, diff = evaluate_combo(STv, SWv, SSv, SLs)
+                                if ok:
+                                    stage_results.append(tup)
+                                seeds_out.append((STv, SWv, SSv, SLs, diff))
+                                if len(stage_results) >= RESULT_CAP:
+                                    return stage_results, seeds_out
+            return stage_results, seeds_out
+
+        # 全域掃描
+        SL_ranges_global = build_SL_ranges(center_SLs=None)
         for STv in ST_candidates:
             for SWv in SW_candidates:
                 for SSv in SS_candidates:
-                    for SLs in itertools.product(*SL_ranges):
-                        opt = {
-                            "第一": Quad(quadA.X, quadA.Y, SLs[0], SWv, STv, SSv, quadA.G),
-                            "第二": Quad(quadB.X, quadB.Y, SLs[1], SWv, STv, SSv, quadB.G),
-                            "第三": Quad(quadC.X, quadC.Y, SLs[2], SWv, STv, SSv, quadC.G),
-                            "第四": (Quad(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0) if disable_D
-                                     else Quad(quadD.X, quadD.Y, SLs[3], SWv, STv, SSv, quadD.G)),
-                        }
-
-                        totF = totXM = totYM = 0.0
-                        for nm in ("第一", "第二", "第三", "第四"):
-                            Fi = opt[nm].force()
-                            totF += Fi
-                            totXM += opt[nm].moment_x(Fi)
-                            totYM += opt[nm].moment_y(Fi)
-
-                        if not (lower_bound <= totF <= upper_bound):
+                    F_sum_min, F_sum_max = sum_F_bounds(SWv, STv, SSv, SL_ranges_global)
+                    if (F_sum_max < lower_bound) or (F_sum_min > upper_bound):
+                        continue
+                    for SLs in itertools.product(*SL_ranges_global):
+                        if disable_D and (len(SLs) == 4) and (abs(SLs[3]) > 1e-12):
                             continue
-                        if abs(totF) < 1e-12:
-                            continue
+                        ok, tup, diff = evaluate_combo(STv, SWv, SSv, SLs)
+                        if ok:
+                            stage_results.append(tup)
+                        seeds_out.append((STv, SWv, SSv, SLs, diff))
+                        if len(stage_results) >= RESULT_CAP:
+                            return stage_results, seeds_out
+        return stage_results, seeds_out
 
-                        allX = (totXM / totF)
-                        allY = (totYM / totF)
-                        if not (-xy_tol <= allX <= xy_tol and -xy_tol <= allY <= xy_tol):
-                            continue
+    # ---------------- 三階段流程 ----------------
+    all_results = []
 
-                        modified = set()
-                        if round(STv - quadA.ST, 6) != 0: modified.add("ST")
-                        if round(SWv - quadA.SW, 6) != 0: modified.add("SW")
-                        enabled_idx = [0, 1, 2] + ([] if disable_D else [3])
-                        if any(round(SLs[i] - SL_bases[i], 6) != 0 for i in enabled_idx):
-                            modified.add("SL")
-                        if round(SSv - quadA.SS, 6) != 0: modified.add("SS")
+    # Stage 1：粗掃（0.1）
+    res1, seeds1 = scan_stage(step_val=0.1, SS_step=0.10, SL_half_span=0.5, seeds=None, beam_local=False)
+    all_results.extend(res1)
 
-                        stars = assign_stars(modified)
-                        results.append((STv, SWv, SLs, SSv, totF, allX, allY, stars, modified))
+    # Beam：挑前 K 個種子（最接近目標力）
+    K = 12  # 可調：越大越穩，越小越快
+    seeds1_sorted = sorted(seeds1, key=lambda s: s[4])[:K]
+    use_beam_mid = len(seeds1_sorted) > 0
 
-        if results:
-            break  # 找到解就不進入下一階段
+    # Stage 2：中掃（0.05）
+    if use_beam_mid:
+        res2, seeds2 = scan_stage(step_val=0.05, SS_step=0.05, SL_half_span=0.25,
+                                  seeds=seeds1_sorted, beam_local=True)
+    else:
+        res2, seeds2 = scan_stage(step_val=0.05, SS_step=0.05, SL_half_span=0.5,
+                                  seeds=None, beam_local=False)
+    all_results.extend(res2)
 
-    # ===== 只顯示結果（排序規則同原版）=====
-    if not results:
+    # 再次挑種子，給精掃用
+    seeds2_sorted = sorted(seeds2 if seeds2 else seeds1, key=lambda s: s[4])[:K]
+    use_beam_fine = len(seeds2_sorted) > 0
+
+    # Stage 3：精掃（0.02）
+    if use_beam_fine:
+        res3, _ = scan_stage(step_val=0.02, SS_step=0.05, SL_half_span=0.15,
+                             seeds=seeds2_sorted, beam_local=True)
+    else:
+        # 保底：全域精掃（成本高，只在前兩階段都空時才會用到）
+        res3, _ = scan_stage(step_val=0.02, SS_step=0.05, SL_half_span=0.5,
+                             seeds=None, beam_local=False)
+    all_results.extend(res3)
+
+    # ---------------- 顯示結果（同原版樣式） ----------------
+    if not all_results:
         st.warning("❌ 找不到符合條件的最佳化組合，請調整輸入條件或範圍。")
     else:
-        results.sort(key=lambda x: (-star_rank.get(x[7], 1), abs(x[4] - F_target)))
-        st.success(f"✅ 找到 {len(results)} 組符合條件的最佳化結果，顯示前 {min(N_show, len(results))} 組：")
-        for idx, (STv, SWv, SLs, SSv, totF, allX, allY, stars, modified) in enumerate(results[:N_show], 1):
+        all_results.sort(key=lambda x: (-star_rank.get(x[7], 1), abs(x[4] - F_target)))
+        st.success(f"✅ 找到 {len(all_results)} 組符合條件的最佳化結果，顯示前 {min(N_show, len(all_results))} 組：")
+        for idx, (STv, SWv, SLs, SSv, totF, allX, allY, stars, modified) in enumerate(all_results[:N_show], 1):
             with st.expander(f"組合 {idx}（{stars}）", expanded=(idx == 1)):
                 for i, nm in enumerate(["第一", "第二", "第三", "第四"]):
                     st.write(f"{nm}象限 → 長度={SLs[i]:.2f} mm / 寬度={SWv:.2f} mm / 厚度={STv:.2f} mm / 行程={SSv:.3f} mm")
@@ -258,7 +379,8 @@ def main():
                 st.write(f"合力中心 X：{allX:.2f}，Y：{allY:.2f}，總合力 F：{totF:.2f} kgf")
 
     st.markdown("---")
-    st.write("最後更新時間：", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    # ---------- 顯示最後更新時間（台灣時間） ----------
+    st.write("最後更新時間（台灣）：", datetime.now(tz_TW).strftime("%Y-%m-%d %H:%M:%S"))
 
 
 if __name__ == "__main__":
@@ -327,7 +449,7 @@ if __name__ == "__main__":
 #2.ALL_X、ALL_Y需在±0.5 內 → OK / NG
 
 #最佳化條件
-#1.ST ∈ {0.3,0.4,0.5}，ABCD相同（兩階段：步0.1→0.02）
+#1.ST ∈ {0.3,0.4,0.5}，ABCD相同（兩階段：步0.1→0.02）→（已升級為三階段：0.1 → 0.05 → 0.02）
 #2.SW >3，且輸入±0.5，步依階段（0.1→0.02），ABCD相同
-#3.SL >5，且輸入±0.5，步依階段（0.1→0.02），各象限可不同
-#4.SS >0.3，且輸入±0.2，間隔0.05，ABCD相同
+#3.SL >5，且輸入±0.5，步依階段（0.1→0.02），各象限可不同（中/精掃在種子附近縮窗）
+#4.SS >0.3，且輸入±0.2，粗掃步0.10；中/精掃步0.05，ABCD相同
