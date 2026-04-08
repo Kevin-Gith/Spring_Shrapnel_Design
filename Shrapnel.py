@@ -5,8 +5,7 @@ import streamlit as st
 from dataclasses import dataclass
 from datetime import datetime
 import itertools
-import pytz
-tz_TW = pytz.timezone("Asia/Taipei")
+from zoneinfo import ZoneInfo
 
 # -------------------- 資料結構 --------------------
 @dataclass
@@ -380,7 +379,7 @@ def main():
 
     st.markdown("---")
     # ---------- 顯示最後更新時間（台灣時間） ----------
-    st.write("最後更新時間（台灣）：", datetime.now(tz_TW).strftime("%Y-%m-%d %H:%M:%S"))
+    st.write("最後更新時間（台灣）：", datetime.now(ZoneInfo("Asia/Taipei")).strftime("%Y-%m-%d %H:%M:%S"))
 
 
 if __name__ == "__main__":
