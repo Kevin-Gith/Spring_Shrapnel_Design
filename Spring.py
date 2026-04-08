@@ -1,8 +1,7 @@
 import streamlit as st
 import math
 from datetime import datetime
-import pytz
-tz_TW = pytz.timezone("Asia/Taipei")
+from zoneinfo import ZoneInfo
 
 # ---------- 固定參數 ----------
 G = 8000  # kgf/mm^2 （彈簧鋼性模數的預設值）
@@ -147,7 +146,7 @@ def main():
                         )
 
     # ---------- 顯示最後更新時間（台灣時間） ----------
-    st.write("最後更新時間（台灣）：", datetime.now(tz_TW).strftime("%Y-%m-%d %H:%M:%S"))
+    st.write("最後更新時間（台灣）：", datetime.now(ZoneInfo("Asia/Taipei")).strftime("%Y-%m-%d %H:%M:%S"))
 
 # 允許直接執行 Spring.py，也能被 app.py 匯入
 if __name__ == "__main__":
